@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-cream: #FFF7EC;
+  --text-wood: #2E2118;
+  --point-orange: #D9652B;
+  --status-alert: #9B2C2C;
+  --mobile-cta-height: 0px;
+}
+
+html {
+  background-color: #FFF7EC;
+  color: #2E2118;
+  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(h1, h2, h3, h4, p, li, dt, dd, figcaption, blockquote) {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+:where(time, .price, .tabular-nums) {
+  font-variant-numeric: tabular-nums;
+}
+
+section[id] {
+  scroll-margin-top: 88px;
+}
+
+:focus-visible {
+  outline: 2px solid #D9652B;
+  outline-offset: 3px;
+}
+
+[data-theme="dark"] :focus-visible {
+  outline-color: #FFF7EC;
+}
+
+body {
+  background-color: #FFF7EC;
+  color: #2E2118;
+  padding-bottom: calc(
+    var(--mobile-cta-height, 0px) + env(safe-area-inset-bottom)
+  );
+  font-family: var(--font-sans, Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif);
+}
+
+@media (max-width: 767px) {
+  section[id] {
+    scroll-margin-top: 80px;
+  }
+
+  body[data-sticky-cta="visible"] {
+    --mobile-cta-height: 72px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Accessibility interactive touch target */
+.accessible-link {
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
+  align-items: center;
+}
+
+/* Korean typography kerning */
+.title-kr {
+  letter-spacing: -0.02em;
+}
+
+.body-kr {
+  letter-spacing: 0;
+}
+
+.label-latin {
+  letter-spacing: 0.06em;
+}
+
+/* Custom scrollbar for horizontal gallery */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

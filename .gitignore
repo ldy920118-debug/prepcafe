@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+.env*
+!.env.example
+
+# Operational source data must stay out of the public repository.
+/data/매장운영데이터.xlsx
+/data/매장운영데이터.json
