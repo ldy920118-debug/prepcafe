@@ -48,6 +48,10 @@ export type SaleRecord = {
   unitPrice: number;
   discount: number;
   paymentFee: number;
+  /** Total material cost assigned to this sales record. Missing legacy values stay unknown. */
+  materialCost?: number | null;
+  /** Total packaging cost assigned to this sales record. Missing legacy values stay unknown. */
+  packagingCost?: number | null;
   createdAt: string;
   updatedAt: string;
 };

@@ -16,7 +16,7 @@ import {
   type SaleRecord,
 } from "@/data/operations";
 
-type ActiveTab = "sales" | "expenses";
+type ActiveTab = "sales" | "expenses" | "profitability" | "daily-pl";
 type SaleDraft = {
   date: string;
   channel: (typeof salesChannels)[number];
@@ -25,6 +25,8 @@ type SaleDraft = {
   unitPrice: string;
   discount: string;
   paymentFee: string;
+  materialCost: string;
+  packagingCost: string;
 };
 type ExpenseDraft = {
   date: string;
@@ -58,6 +60,8 @@ function blankSale(): SaleDraft {
     unitPrice: String(menuOptions[0].suggestedPrice),
     discount: "0",
     paymentFee: "0",
+    materialCost: "",
+    packagingCost: "",
   };
 }
 
@@ -86,6 +90,9 @@ function dateLabel(date: string): string {
 
 export default function OperationsApp() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("sales");
+  const [selectedDate, setSelectedDate] = useState(getTodayInKorea);
+  const [profitabilityStartDate, setProfitabilityStartDate] = useState(getTodayInKorea);
+  const [profitabilityEndDate, setProfitabilityEndDate] = useState(getTodayInKorea);
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -155,6 +162,8 @@ export default function OperationsApp() {
         unitPrice: String(record.unitPrice),
         discount: String(record.discount),
         paymentFee: String(record.paymentFee),
+        materialCost: record.materialCost == null ? "" : String(record.materialCost),
+        packagingCost: record.packagingCost == null ? "" : String(record.packagingCost),
       });
       setDialog({ kind: "sale", id: record.id });
     } else {
@@ -187,6 +196,10 @@ export default function OperationsApp() {
     const unitPrice = Number(saleDraft.unitPrice);
     const discount = Number(saleDraft.discount);
     const paymentFee = Number(saleDraft.paymentFee);
+    const materialCostBlank = saleDraft.materialCost.trim() === "";
+    const packagingCostBlank = saleDraft.packagingCost.trim() === "";
+    const materialCost = materialCostBlank ? null : Number(saleDraft.materialCost);
+    const packagingCost = packagingCostBlank ? null : Number(saleDraft.packagingCost);
     const gross = quantity * unitPrice;
 
     if (!saleDraft.date || !saleDraft.channel || !saleDraft.menuId) {
@@ -209,6 +222,15 @@ export default function OperationsApp() {
       setFormError("결제 수수료는 실제 금액을 0원 이상으로 입력해 주세요.");
       return;
     }
+    if (materialCostBlank !== packagingCostBlank) {
+      setFormError("재료 원가와 포장 원가는 함께 입력하거나 둘 다 비워 두세요.");
+      return;
+    }
+    if ((materialCost !== null && (!Number.isSafeInteger(materialCost) || materialCost < 0)) ||
+      (packagingCost !== null && (!Number.isSafeInteger(packagingCost) || packagingCost < 0))) {
+      setFormError("재료·포장 원가는 0원 이상의 정수로 입력해 주세요.");
+      return;
+    }
 
     savingRef.current = true;
     setSaving(true);
@@ -225,6 +247,8 @@ export default function OperationsApp() {
       unitPrice,
       discount,
       paymentFee,
+      materialCost,
+      packagingCost,
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     };
@@ -307,6 +331,33 @@ export default function OperationsApp() {
 
   const sortedSales = [...sales].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
   const sortedExpenses = [...expenses].sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  const profitabilitySales = sales.filter((record) => record.date >= profitabilityStartDate && record.date <= profitabilityEndDate);
+  const selectedSales = sales.filter((record) => record.date === selectedDate);
+  const selectedExpenses = expenses.filter((record) => record.date === selectedDate);
+  const menuPerformance = menuOptions.map((item) => {
+    const records = profitabilitySales.filter((record) => record.menuId === item.id);
+    const quantity = records.reduce((sum, record) => sum + record.quantity, 0);
+    const grossRevenue = records.reduce((sum, record) => sum + record.quantity * record.unitPrice, 0);
+    const netRevenue = records.reduce((sum, record) => sum + saleNetRevenue(record.quantity, record.unitPrice, record.discount), 0);
+    const hasCompleteDirectCosts = records.length > 0 && records.every((record) => record.materialCost != null && record.packagingCost != null);
+    const directCost = hasCompleteDirectCosts
+      ? records.reduce((sum, record) => sum + (record.materialCost ?? 0) + (record.packagingCost ?? 0) + record.paymentFee, 0)
+      : null;
+    const contribution = directCost === null ? null : netRevenue - directCost;
+    return { ...item, records, quantity, grossRevenue, netRevenue, directCost, contribution };
+  }).sort((a, b) => {
+    if (a.contribution === null) return b.contribution === null ? a.name.localeCompare(b.name, "ko") : 1;
+    if (b.contribution === null) return -1;
+    return b.contribution - a.contribution;
+  });
+  const selectedNetRevenue = selectedSales.reduce((sum, record) => sum + saleNetRevenue(record.quantity, record.unitPrice, record.discount), 0);
+  const selectedDirectCost = selectedSales.length > 0 && selectedSales.every((record) => record.materialCost != null && record.packagingCost != null)
+    ? selectedSales.reduce((sum, record) => sum + (record.materialCost ?? 0) + (record.packagingCost ?? 0) + record.paymentFee, 0)
+    : null;
+  const selectedExpenseTotal = selectedExpenses.reduce((sum, record) => sum + record.amount, 0);
+  const selectedProfit = selectedSales.length > 0 && selectedDirectCost !== null && selectedExpenses.length > 0
+    ? selectedNetRevenue - selectedDirectCost - selectedExpenseTotal
+    : null;
 
   return (
     <main className="min-h-screen bg-[#fbf9f6] text-[#1b1c1a]">
@@ -360,52 +411,58 @@ export default function OperationsApp() {
         <section className="mt-6 overflow-hidden rounded-2xl border border-[#e4ddd7] bg-white shadow-[0_4px_16px_-2px_rgba(92,61,46,0.06)]">
           <div className="flex flex-col gap-4 border-b border-[#eae8e5] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#8a7064]">Daily records</p>
-              <h2 className="mt-1 text-lg font-bold">판매와 비용 기록</h2>
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#8a7064]">Daily records & insights</p>
+              <h2 className="mt-1 text-lg font-bold">운영 기록과 분석</h2>
             </div>
-            <div role="tablist" aria-label="기록 종류" className="inline-flex w-fit rounded-xl bg-[#f5f3f0] p-1">
+            <div role="tablist" aria-label="운영 화면" className="flex w-fit flex-wrap rounded-xl bg-[#f5f3f0] p-1">
               <button
                 id="sales-tab"
                 type="button"
                 role="tab"
                 aria-selected={activeTab === "sales"}
-                aria-controls="records-panel"
+                aria-controls="operations-panel"
                 onClick={() => { setActiveTab("sales"); setNotice(""); }}
-                className={`min-h-10 rounded-lg px-4 text-sm font-semibold transition ${activeTab === "sales" ? "bg-white text-[#43271a] shadow-sm" : "text-[#70635c] hover:text-[#43271a]"}`}
+                className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${activeTab === "sales" ? "bg-white text-[#43271a] shadow-sm" : "text-[#70635c] hover:text-[#43271a]"}`}
               >판매 기록 <span className="ml-1 text-xs opacity-70">{sales.length}</span></button>
               <button
                 id="expenses-tab"
                 type="button"
                 role="tab"
                 aria-selected={activeTab === "expenses"}
-                aria-controls="records-panel"
+                aria-controls="operations-panel"
                 onClick={() => { setActiveTab("expenses"); setNotice(""); }}
-                className={`min-h-10 rounded-lg px-4 text-sm font-semibold transition ${activeTab === "expenses" ? "bg-white text-[#43271a] shadow-sm" : "text-[#70635c] hover:text-[#43271a]"}`}
+                className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${activeTab === "expenses" ? "bg-white text-[#43271a] shadow-sm" : "text-[#70635c] hover:text-[#43271a]"}`}
               >비용 전표 <span className="ml-1 text-xs opacity-70">{expenses.length}</span></button>
+              <button id="profitability-tab" type="button" role="tab" aria-selected={activeTab === "profitability"} aria-controls="operations-panel" onClick={() => { setActiveTab("profitability"); setNotice(""); }} className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${activeTab === "profitability" ? "bg-white text-[#43271a] shadow-sm" : "text-[#70635c] hover:text-[#43271a]"}`}>메뉴 수익성</button>
+              <button id="daily-pl-tab" type="button" role="tab" aria-selected={activeTab === "daily-pl"} aria-controls="operations-panel" onClick={() => { setActiveTab("daily-pl"); setNotice(""); }} className={`min-h-10 rounded-lg px-3 text-sm font-semibold transition ${activeTab === "daily-pl" ? "bg-white text-[#43271a] shadow-sm" : "text-[#70635c] hover:text-[#43271a]"}`}>일 손익</button>
             </div>
           </div>
 
-          <div id="records-panel" role="tabpanel" aria-labelledby={activeTab === "sales" ? "sales-tab" : "expenses-tab"} className="p-4 sm:p-6">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div id="operations-panel" role="tabpanel" aria-labelledby={`${activeTab}-tab`} className="p-4 sm:p-6">
+            {(activeTab === "sales" || activeTab === "expenses") && <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               <div>
                 <h3 className="text-base font-bold">{activeTab === "sales" ? "일일 판매 내역" : "날짜별 비용 지출"}</h3>
                 <p className="mt-1 text-sm text-[#756963]">
                   {activeTab === "sales"
-                    ? "수량·실제 단가·할인·실제 결제 수수료를 기록합니다."
+                    ? "수량·단가·할인·실제 수수료와 아는 경우 재료·포장 원가를 기록합니다."
                     : "비용 항목·구분·금액을 입력하고 날짜별로 보관합니다."}
                 </p>
               </div>
               <button className={secondaryButtonClass} type="button" onClick={() => activeTab === "sales" ? openSaleDialog() : openExpenseDialog()}>
                 ＋ {activeTab === "sales" ? "판매 기록 추가" : "비용 기록 추가"}
               </button>
-            </div>
+            </div>}
 
             {!loaded ? (
               <div className="rounded-xl border border-dashed border-[#d4c3bc] px-5 py-12 text-center text-sm text-[#756963]" role="status">저장된 기록을 불러오는 중입니다…</div>
             ) : activeTab === "sales" ? (
               <SalesTable records={sortedSales} onEdit={openSaleDialog} onDelete={deleteSale} onAdd={() => openSaleDialog()} />
-            ) : (
+            ) : activeTab === "expenses" ? (
               <ExpensesTable records={sortedExpenses} onEdit={openExpenseDialog} onDelete={deleteExpense} onAdd={() => openExpenseDialog()} />
+            ) : activeTab === "profitability" ? (
+              <ProfitabilityPanel startDate={profitabilityStartDate} endDate={profitabilityEndDate} onStartDateChange={setProfitabilityStartDate} onEndDateChange={setProfitabilityEndDate} records={menuPerformance} />
+            ) : (
+              <DailyProfitLossPanel date={selectedDate} onDateChange={setSelectedDate} salesCount={selectedSales.length} expensesCount={selectedExpenses.length} netRevenue={selectedNetRevenue} directCost={selectedDirectCost} expenseTotal={selectedExpenseTotal} profit={selectedProfit} />
             )}
           </div>
         </section>
@@ -466,6 +523,18 @@ export default function OperationsApp() {
               <FormField label="실제 결제 수수료" htmlFor="sale-fee" hint="수수료율을 추정하지 않습니다">
                 <input id="sale-fee" className={inputClass} type="number" inputMode="numeric" min="0" step="1" required value={saleDraft.paymentFee} onChange={(event) => setSaleDraft({ ...saleDraft, paymentFee: event.target.value })} />
               </FormField>
+            </div>
+            <div className="rounded-xl border border-[#eadfd7] bg-[#fbf9f6] p-4">
+              <p className="text-sm font-bold text-[#51433b]">메뉴 직접 원가 <span className="font-normal text-[#81756e]">(이 판매 기록 전체)</span></p>
+              <p className="mt-1 text-xs leading-5 text-[#81756e]">재료·포장 원가를 모르면 비워 두세요. 비어 있으면 이 메뉴의 수익성은 ‘자료 확인 필요’로 표시합니다. 두 값은 함께 입력하거나 둘 다 비워 둘 수 있습니다.</p>
+              <div className="mt-3 grid gap-4 sm:grid-cols-2">
+                <FormField label="재료 원가 합계" htmlFor="sale-material-cost">
+                  <input id="sale-material-cost" className={inputClass} type="number" inputMode="numeric" min="0" step="1" placeholder="예: 1200" value={saleDraft.materialCost} onChange={(event) => setSaleDraft({ ...saleDraft, materialCost: event.target.value })} />
+                </FormField>
+                <FormField label="포장 원가 합계" htmlFor="sale-packaging-cost">
+                  <input id="sale-packaging-cost" className={inputClass} type="number" inputMode="numeric" min="0" step="1" placeholder="예: 200" value={saleDraft.packagingCost} onChange={(event) => setSaleDraft({ ...saleDraft, packagingCost: event.target.value })} />
+                </FormField>
+              </div>
             </div>
             <div className="rounded-xl border border-[#eadfd7] bg-[#fbf9f6] p-4" aria-live="polite">
               <div className="flex items-center justify-between text-sm text-[#62544c]"><span>순매출 미리보기</span><span className="font-bold tabular-nums text-[#43271a]">{Number.isFinite(saleNet) && saleNet >= 0 ? formatWon(saleNet) : "금액 확인 필요"}</span></div>
@@ -560,17 +629,141 @@ function EmptyState({ title, description, action }: { title: string; description
   );
 }
 
+type MenuProfitability = {
+  id: string;
+  name: string;
+  suggestedPrice: number;
+  quantity: number;
+  grossRevenue: number;
+  netRevenue: number;
+  directCost: number | null;
+  contribution: number | null;
+};
+
+function ProfitabilityPanel({ startDate, endDate, onStartDateChange, onEndDateChange, records }: { startDate: string; endDate: string; onStartDateChange: (date: string) => void; onEndDateChange: (date: string) => void; records: MenuProfitability[] }) {
+  const validRange = startDate <= endDate;
+  const soldMenus = records.filter((record) => record.quantity > 0);
+  const netRevenue = soldMenus.reduce((sum, record) => sum + record.netRevenue, 0);
+  const directCostIsKnown = soldMenus.length > 0 && soldMenus.every((record) => record.directCost !== null);
+  const directCost = directCostIsKnown ? soldMenus.reduce((sum, record) => sum + (record.directCost ?? 0), 0) : null;
+  const contribution = directCost === null ? null : netRevenue - directCost;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h3 className="text-base font-bold">메뉴 수익성</h3>
+          <p className="mt-1 text-sm text-[#756963]">선택한 기간의 저장 판매 기록으로 직접 비용과 공헌이익을 비교합니다.</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <FormField label="시작일" htmlFor="profitability-start-date">
+            <input id="profitability-start-date" className={inputClass} type="date" value={startDate} onChange={(event) => onStartDateChange(event.target.value)} />
+          </FormField>
+          <FormField label="종료일" htmlFor="profitability-end-date">
+            <input id="profitability-end-date" className={inputClass} type="date" value={endDate} onChange={(event) => onEndDateChange(event.target.value)} />
+          </FormField>
+        </div>
+      </div>
+
+      {!validRange && <p role="alert" className="rounded-lg border border-[#e8b3ac] bg-[#fff0ed] px-4 py-3 text-sm text-[#8d2e24]">시작일은 종료일보다 늦을 수 없습니다.</p>}
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <SummaryCard label="선택 기간 순매출" value={soldMenus.length ? formatWon(netRevenue) : "기록 없음"} detail={`${soldMenus.length}개 메뉴 판매`} />
+        <SummaryCard label="메뉴 직접 비용" value={soldMenus.length ? directCost === null ? "자료 확인 필요" : formatWon(directCost) : "기록 없음"} detail="재료 + 포장 + 실제 수수료" />
+        <SummaryCard label="선택 기간 공헌이익" value={soldMenus.length ? contribution === null ? "자료 확인 필요" : formatWon(contribution) : "기록 없음"} detail="순매출 − 메뉴 직접 비용" />
+      </div>
+
+      {soldMenus.some((record) => record.directCost === null) && (
+        <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
+          원가를 입력하지 않은 판매가 있습니다. 해당 메뉴의 합계는 0원으로 대신하지 않고 ‘자료 확인 필요’로 표시합니다. 판매 기록에서 재료·포장 원가를 입력할 수 있습니다.
+        </p>
+      )}
+
+      <div className="overflow-x-auto rounded-xl border border-[#eae3db]">
+        <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
+          <thead className="bg-[#f5f3f0] text-xs font-semibold text-[#6f625b]"><tr>
+            <th className="px-4 py-3">메뉴</th><th className="px-4 py-3 text-right">평균 판매가</th><th className="px-4 py-3 text-right">기간 직접 비용</th>
+            <th className="px-4 py-3 text-right">개당 직접 비용</th><th className="px-4 py-3 text-right">개당 공헌이익</th><th className="px-4 py-3 text-right">공헌이익률</th>
+            <th className="px-4 py-3 text-right">판매 수량</th><th className="px-4 py-3 text-right">기간 공헌이익</th>
+          </tr></thead>
+          <tbody className="divide-y divide-[#eee8e3]">{records.map((record) => {
+            const sold = record.quantity > 0;
+            return <tr key={record.id} className="hover:bg-[#fbf9f6]">
+              <td className="whitespace-nowrap px-4 py-3 font-semibold">{record.name}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{sold ? formatWon(Math.round(record.grossRevenue / record.quantity)) : "기록 없음"}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{!sold ? "기록 없음" : record.directCost === null ? "자료 확인 필요" : formatWon(record.directCost)}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{!sold ? "기록 없음" : record.directCost === null ? "자료 확인 필요" : formatWon(Math.round(record.directCost / record.quantity))}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular-nums">{!sold ? "기록 없음" : record.contribution === null ? "자료 확인 필요" : formatWon(Math.round(record.contribution / record.quantity))}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{!sold ? "기록 없음" : record.contribution === null ? "자료 확인 필요" : record.netRevenue === 0 ? "계산 불가" : `${((record.contribution / record.netRevenue) * 100).toFixed(2)}%`}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{record.quantity || "—"}</td>
+              <td className="whitespace-nowrap px-4 py-3 text-right font-bold tabular-nums text-[#43271a]">{!sold ? "기록 없음" : record.contribution === null ? "자료 확인 필요" : formatWon(record.contribution)}</td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+      <p className="text-xs leading-5 text-[#81756e]">재료·포장 원가는 판매 기록 전체의 합계이며 개당 값은 판매 수량으로 나눈 평균입니다. 임차료·인건비 같은 공통 비용은 메뉴별 직접 비용에 배분하지 않습니다.</p>
+    </div>
+  );
+}
+
+function DailyProfitLossPanel({ date, onDateChange, salesCount, expensesCount, netRevenue, directCost, expenseTotal, profit }: {
+  date: string;
+  onDateChange: (date: string) => void;
+  salesCount: number;
+  expensesCount: number;
+  netRevenue: number;
+  directCost: number | null;
+  expenseTotal: number;
+  profit: number | null;
+}) {
+  const profitHelp = salesCount === 0
+    ? "해당 날짜에 판매 기록이 없어 손익을 계산하지 않습니다."
+    : directCost === null
+      ? "판매 기록의 재료·포장 원가를 모두 입력해야 손익을 계산할 수 있습니다."
+      : expensesCount === 0
+        ? "해당 날짜 비용 기록이 없어 손익을 확정하지 않습니다. 비용 기록이 실제 0원인 경우도 금액을 입력해 주세요."
+        : "순매출 − 메뉴 직접 비용 − 날짜별 비용";
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h3 className="text-base font-bold">선택한 날짜의 실제 손익</h3>
+          <p className="mt-1 text-sm text-[#756963]">선택일에 저장된 판매·직접 비용·비용 전표만 계산합니다. 월 비용 계획은 더하지 않습니다.</p>
+        </div>
+        <FormField label="손익 날짜" htmlFor="daily-pl-date">
+          <input id="daily-pl-date" className={inputClass} type="date" value={date} onChange={(event) => onDateChange(event.target.value)} />
+        </FormField>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#eadfd7] bg-[#fbf9f6] px-4 py-3 text-sm">
+        <span className="rounded-full bg-white px-3 py-1 font-bold text-[#654632]">누적/미마감</span>
+        <span className="text-[#756963]">일 마감·잠금은 수업 범위에 포함되지 않습니다.</span>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard label="순매출" value={salesCount ? formatWon(netRevenue) : "기록 없음"} detail={`${salesCount}건 판매`} />
+        <SummaryCard label="메뉴 직접 비용" value={salesCount ? directCost === null ? "자료 확인 필요" : formatWon(directCost) : "기록 없음"} detail="재료 + 포장 + 실제 수수료" />
+        <SummaryCard label="날짜별 비용" value={expensesCount ? formatWon(expenseTotal) : "기록 없음"} detail={`${expensesCount}건 비용 전표`} />
+        <SummaryCard label="일 손익" value={profit === null ? salesCount ? "계산 자료 확인 필요" : "기록 없음" : formatWon(profit)} detail={profitHelp} />
+      </div>
+
+      {profit !== null && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-950">{formatWon(netRevenue)} − {formatWon(directCost ?? 0)} − {formatWon(expenseTotal)} = {formatWon(profit)}</p>}
+    </div>
+  );
+}
+
 function SalesTable({ records, onEdit, onDelete, onAdd }: { records: SaleRecord[]; onEdit: (record: SaleRecord) => void; onDelete: (record: SaleRecord) => void; onAdd: () => void }) {
   if (!records.length) {
     return <EmptyState title="아직 판매 기록이 없습니다" description="검증용 판매 한 건을 입력하면 이 목록에 저장됩니다. 첨부된 과거 판매 이력은 시작 자료에 포함하지 않았습니다." action={<button type="button" className={secondaryButtonClass} onClick={onAdd}>판매 기록 입력</button>} />;
   }
   return (
     <div className="overflow-x-auto rounded-xl border border-[#eae3db]">
-      <table className="w-full min-w-[860px] border-collapse text-left text-sm">
+      <table className="w-full min-w-[980px] border-collapse text-left text-sm">
         <thead className="bg-[#f5f3f0] text-xs font-semibold text-[#6f625b]"><tr>
           <th className="px-4 py-3">일자</th><th className="px-4 py-3">판매 채널</th><th className="px-4 py-3">메뉴</th>
           <th className="px-4 py-3 text-right">수량</th><th className="px-4 py-3 text-right">개당 단가</th><th className="px-4 py-3 text-right">할인</th>
-          <th className="px-4 py-3 text-right">순매출</th><th className="px-4 py-3 text-right">실제 수수료</th><th className="px-4 py-3 text-right">관리</th>
+          <th className="px-4 py-3 text-right">순매출</th><th className="px-4 py-3 text-right">실제 수수료</th><th className="px-4 py-3 text-right">재료 원가</th><th className="px-4 py-3 text-right">포장 원가</th><th className="px-4 py-3 text-right">관리</th>
         </tr></thead>
         <tbody className="divide-y divide-[#eee8e3]">
           {records.map((record) => <tr key={record.id} className="transition hover:bg-[#fbf9f6]">
@@ -582,6 +775,8 @@ function SalesTable({ records, onEdit, onDelete, onAdd }: { records: SaleRecord[
             <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{formatWon(record.discount)}</td>
             <td className="whitespace-nowrap px-4 py-3 text-right font-bold tabular-nums text-[#43271a]">{formatWon(saleNetRevenue(record.quantity, record.unitPrice, record.discount))}</td>
             <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{formatWon(record.paymentFee)}</td>
+            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{record.materialCost == null ? "자료 확인 필요" : formatWon(record.materialCost)}</td>
+            <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{record.packagingCost == null ? "자료 확인 필요" : formatWon(record.packagingCost)}</td>
             <td className="whitespace-nowrap px-4 py-3 text-right"><RecordActions label={`${menuName(record.menuId)} 판매 기록`} onEdit={() => onEdit(record)} onDelete={() => onDelete(record)} /></td>
           </tr>)}
         </tbody>
